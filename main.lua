@@ -1,9 +1,10 @@
---==================================================
--- BIGBOSS TELEPORTER (Final - Safe & Fast)
+ --==================================================
+-- BIGBOSS TELEPORTER (Final - Glide Style)
 --==================================================
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 
 --==================================================
@@ -20,17 +21,15 @@ local GREEN  = Color3.fromRGB(60, 200, 110)
 local RED    = Color3.fromRGB(220, 70, 70)
 
 --==================================================
--- CONFIG (final balanced values)
+-- CONFIG
 --==================================================
 
 local CONFIG = {
-    TeleportDelay   = 0.15,
-    CooldownTime    = 2.0,
-    YOffset         = 5,
-    UseRandomDelay  = true,
-    HopSize         = 150,    -- 150 studs per step
-    HopDelay        = 0.45,   -- 0.45s pause between steps
-    MaxBounceCheck  = 80,     -- if > 80 studs off target, retry
+    GlideSpeed      = 350,
+    GlideHeight     = 20,
+    MinGlideSpeed   = 200,
+    MaxGlideSpeed   = 500,
+    CooldownTime    = 1.5,
 }
 
 --==================================================
@@ -38,8 +37,8 @@ local CONFIG = {
 --==================================================
 
 local savedPoints = {}
+local gliding = false
 local lastTeleport = 0
-local teleporting = false
 
 --==================================================
 -- GUI
@@ -289,24 +288,19 @@ local function setStatus(text, color)
     statusLabel.TextColor3 = color or GREY
 end
 
-local function randomBetween(min, max)
-    return min + math.random() * (max - min)
-end
-
 --==================================================
--- SAFE TELEPORT (final - no anchor, no die, no bounce)
+-- GLIDE TELEPORT
 --==================================================
 
-local function safeTeleport(point)
-    if teleporting then
-        setStatus("Already teleporting...", ORANGE)
+local function glideTo(point)
+    if gliding then
+        setStatus("Already gliding...", ORANGE)
         return false
     end
 
     local now = tick()
-    local elapsed = now - lastTeleport
-    if elapsed < CONFIG.CooldownTime then
-        local waitTime = CONFIG.CooldownTime - elapsed
+    if now - lastTeleport < CONFIG.CooldownTime then
+        local waitTime = CONFIG.CooldownTime - (now - lastTeleport)
         setStatus(string.format("Cooldown: %.1fs", waitTime), RED)
         return false
     end
@@ -317,101 +311,86 @@ local function safeTeleport(point)
         return false
     end
 
-    teleporting = true
+    gliding = true
     lastTeleport = now
 
-    -- Save original health
     local originalHealth = humanoid.Health
 
-    -- Disable dangerous states during teleport
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+        humanoid.PlatformStand = true
     end)
 
-    -- Health protection (restore if damaged mid-TP)
     local healthConn
     healthConn = humanoid.HealthChanged:Connect(function(newHealth)
         if newHealth < originalHealth and newHealth > 0 then
-            pcall(function()
-                humanoid.Health = originalHealth
-            end)
+            pcall(function() humanoid.Health = originalHealth end)
         end
     end)
-
-    local delay = CONFIG.TeleportDelay
-    if CONFIG.UseRandomDelay then
-        delay = delay + randomBetween(0, 0.1)
-    end
-    task.wait(delay)
 
     local startPos = root.Position
     local endPos = Vector3.new(
         point.cframe.X,
-        point.cframe.Y + CONFIG.YOffset,
+        point.cframe.Y + 3,
         point.cframe.Z
     )
 
-    local totalDistance = (endPos - startPos).Magnitude
-    local steps = math.max(1, math.ceil(totalDistance / CONFIG.HopSize))
+    local totalDist = (endPos - startPos).Magnitude
+    local speed = math.clamp(CONFIG.GlideSpeed, CONFIG.MinGlideSpeed, CONFIG.MaxGlideSpeed)
+    local duration = totalDist / speed
 
-    -- Move step by step
-    for i = 1, steps do
-        root, humanoid = getChar()
-        if not root or not humanoid then
-            pcall(function() healthConn:Disconnect() end)
-            teleporting = false
-            setStatus("Died during TP", RED)
-            return false
+    setStatus(string.format("Gliding... (%.1fs)", duration), ORANGE)
+
+    local elapsed = 0
+    local connection
+    connection = RunService.Heartbeat:Connect(function(dt)
+        elapsed = elapsed + dt
+        local t = math.clamp(elapsed / duration, 0, 1)
+
+        local currentRoot, currentHum = getChar()
+        if not currentRoot or not currentHum then
+            connection:Disconnect()
+            healthConn:Disconnect()
+            gliding = false
+            setStatus("Died during glide", RED)
+            return
         end
 
-        local t = i / steps
-        local stepPos = startPos:Lerp(endPos, t)
+        local newPos = startPos:Lerp(endPos, t)
+        local arcHeight = math.sin(t * math.pi) * CONFIG.GlideHeight
+        newPos = newPos + Vector3.new(0, arcHeight, 0)
 
-        setStatus(string.format("Teleporting... %d/%d", i, steps), ORANGE)
+        currentRoot.CFrame = CFrame.new(newPos)
 
-        -- Direct CFrame move (no anchor)
-        root.CFrame = CFrame.new(stepPos)
-
-        -- Reset velocity
         pcall(function()
-            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            root.Velocity = Vector3.new(0, 0, 0)
+            currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            currentRoot.Velocity = Vector3.new(0, 0, 0)
         end)
 
-        -- Pause between steps (server needs time to validate)
-        if i < steps then
-            task.wait(CONFIG.HopDelay)
+        if t >= 1 then
+            connection:Disconnect()
         end
-    end
+    end)
 
-    -- Disconnect health protection
+    task.wait(duration + 0.1)
+
+    pcall(function() connection:Disconnect() end)
     pcall(function() healthConn:Disconnect() end)
 
-    -- Restore humanoid states
-    task.wait(0.15)
+    task.wait(0.1)
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
         humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    -- Final bounce check
-    task.wait(0.3)
-    root = getChar()
-    if root then
-        local finalDist = (root.Position - endPos).Magnitude
-        if finalDist > CONFIG.MaxBounceCheck then
-            teleporting = false
-            setStatus("Bounce detected - retry", RED)
-            return false
-        end
-    end
-
-    teleporting = false
-    setStatus(string.format("Teleported: %s (%d steps)", point.name, steps), GREEN)
-    print(string.format("[BIGBOSS TP] Teleported to %s (%d steps, %.0f studs)", point.name, steps, totalDistance))
+    gliding = false
+    setStatus(string.format("Arrived: %s", point.name), GREEN)
+    print(string.format("[BIGBOSS TP] Glided to %s (%.0f studs)", point.name, totalDist))
     return true
 end
 
@@ -420,7 +399,6 @@ end
 --==================================================
 
 local function createRow(point, index)
-
     local row = Instance.new("Frame")
     row.Name = "Point_" .. index
     row.Size = UDim2.new(1, -12, 0, 46)
@@ -478,16 +456,18 @@ local function createRow(point, index)
     clickBtn.ZIndex = 2
 
     clickBtn.MouseButton1Click:Connect(function()
-        local ok = safeTeleport(point)
-        if ok then
-            row.BackgroundColor3 = GREEN
-            task.wait(0.2)
-            row.BackgroundColor3 = PANEL2
-        else
-            row.BackgroundColor3 = RED
-            task.wait(0.2)
-            row.BackgroundColor3 = PANEL2
-        end
+        task.spawn(function()
+            local ok = glideTo(point)
+            if ok then
+                row.BackgroundColor3 = GREEN
+                task.wait(0.2)
+                row.BackgroundColor3 = PANEL2
+            else
+                row.BackgroundColor3 = RED
+                task.wait(0.2)
+                row.BackgroundColor3 = PANEL2
+            end
+        end)
     end)
 
     return row
@@ -498,7 +478,6 @@ end
 --==================================================
 
 saveBtn.MouseButton1Click:Connect(function()
-
     local name = nameBox.Text
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
 
@@ -579,4 +558,4 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] BIGBOSS TELEPORTER loaded.")
+print("[BIGBOSS TP] Glide Teleporter loaded.")
