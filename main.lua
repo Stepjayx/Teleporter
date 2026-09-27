@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (Anti-Cheat Safe)
+-- BIGBOSS TELEPORTER (with Circle Logo)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -24,10 +24,10 @@ local RED    = Color3.fromRGB(220, 70, 70)
 --==================================================
 
 local CONFIG = {
-    TeleportDelay   = 0.15,   -- pause before jumping (looks natural)
-    CooldownTime    = 2.0,    -- can only teleport once every 2 seconds
-    YOffset         = 3,      -- height above saved point
-    UseRandomDelay  = true,   -- adds small random jitter
+    TeleportDelay   = 0.15,
+    CooldownTime    = 2.0,
+    YOffset         = 10,
+    UseRandomDelay  = true,
 }
 
 --==================================================
@@ -50,12 +50,97 @@ gui.IgnoreGuiInset = true
 gui.DisplayOrder = 999
 gui.Parent = player:WaitForChild("PlayerGui")
 
+--==================================================
+-- CIRCLE LOGO (hidden by default)
+--==================================================
+
+local logo = Instance.new("TextButton")
+logo.Name = "CircleLogo"
+logo.Size = UDim2.fromOffset(55, 55)
+logo.Position = UDim2.new(0, 20, 0.5, -27)
+logo.BackgroundColor3 = BLACK
+logo.Text = "BBHV3"
+logo.TextColor3 = ORANGE
+logo.TextSize = 11
+logo.Font = Enum.Font.GothamBold
+logo.AutoButtonColor = false
+logo.Visible = false
+logo.BorderSizePixel = 0
+logo.Parent = gui
+
+local logoCorner = Instance.new("UICorner")
+logoCorner.CornerRadius = UDim.new(1, 0)
+logoCorner.Parent = logo
+
+local logoStroke = Instance.new("UIStroke")
+logoStroke.Color = ORANGE
+logoStroke.Thickness = 2
+logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+logoStroke.Parent = logo
+
+-- LOGO DRAG / TAP
+local logoDragging = false
+local logoDragStart
+local logoStartPos
+local logoMoved = false
+local logoPressStart = 0
+local DRAG_THRESHOLD = 8
+
+logo.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        logoDragging = true
+        logoMoved = false
+        logoPressStart = tick()
+        logoDragStart = input.Position
+        logoStartPos = logo.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not logoDragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        local delta = input.Position - logoDragStart
+        local moved = math.abs(delta.X) + math.abs(delta.Y)
+        if moved > DRAG_THRESHOLD then
+            logoMoved = true
+            logo.Position = UDim2.new(
+                logoStartPos.X.Scale,
+                logoStartPos.X.Offset + delta.X,
+                logoStartPos.Y.Scale,
+                logoStartPos.Y.Offset + delta.Y
+            )
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        logoDragging = false
+        if not logoMoved then
+            local pressDuration = tick() - logoPressStart
+            if pressDuration < 0.5 then
+                main.Visible = true
+                logo.Visible = false
+            end
+        end
+        logoMoved = false
+    end
+end)
+
+--==================================================
+-- MAIN PANEL
+--==================================================
+
 local main = Instance.new("Frame")
 main.Name = "Main"
 main.Size = UDim2.fromOffset(320, 380)
 main.Position = UDim2.new(0.5, -160, 0.5, -190)
 main.BackgroundColor3 = BLACK
 main.BorderSizePixel = 0
+main.Visible = true
 main.Parent = gui
 
 local mainCorner = Instance.new("UICorner")
@@ -103,7 +188,8 @@ closeCorner.CornerRadius = UDim.new(0, 7)
 closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function()
-    gui:Destroy()
+    main.Visible = false
+    logo.Visible = true
 end)
 
 --==================================================
@@ -202,10 +288,15 @@ emptyLabel.Parent = list
 -- HELPERS
 --==================================================
 
-local function getRoot()
+local function getChar()
     local char = player.Character
-    if not char then return nil end
-    return char:FindFirstChild("HumanoidRootPart")
+    if not char then return nil, nil end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if root and humanoid and humanoid.Health > 0 then
+        return root, humanoid
+    end
+    return nil, nil
 end
 
 local function refreshEmptyLabel()
@@ -236,12 +327,12 @@ local function safeTeleport(point)
 
     if elapsed < CONFIG.CooldownTime then
         local waitTime = CONFIG.CooldownTime - elapsed
-        setStatus(("Cooldown: %.1fs"):format(waitTime), RED)
+        setStatus(string.format("Cooldown: %.1fs", waitTime), RED)
         return false
     end
 
-    local root = getRoot()
-    if not root then
+    local root, humanoid = getChar()
+    if not root or not humanoid then
         setStatus("No character", RED)
         return false
     end
@@ -249,23 +340,40 @@ local function safeTeleport(point)
     teleporting = true
     lastTeleport = now
 
-    -- Small delay so anti-cheat doesn't see an instant jump
     local delay = CONFIG.TeleportDelay
     if CONFIG.UseRandomDelay then
         delay = delay + randomBetween(0, 0.1)
     end
     task.wait(delay)
 
-    -- Re-check character still exists after delay
-    root = getRoot()
-    if not root then
+    root, humanoid = getChar()
+    if not root or not humanoid then
         teleporting = false
         setStatus("Character gone", RED)
         return false
     end
 
-    -- Perform the teleport
-    root.CFrame = point.cframe + Vector3.new(0, CONFIG.YOffset, 0)
+    pcall(function()
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+    task.wait(0.05)
+
+    root.CFrame = CFrame.new(
+        point.cframe.X,
+        point.cframe.Y + CONFIG.YOffset,
+        point.cframe.Z
+    )
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.Velocity = Vector3.new(0, 0, 0)
+    end)
+
+    task.wait(0.1)
+    pcall(function()
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        humanoid.PlatformStand = false
+    end)
+
     teleporting = false
     setStatus("Teleported: " .. point.name, GREEN)
     print("[BIGBOSS TP] Teleported to: " .. point.name)
@@ -301,7 +409,6 @@ local function createRow(point, index)
     label.TextTruncate = Enum.TextTruncate.AtEnd
     label.Parent = row
 
-    -- DELETE
     local delBtn = Instance.new("TextButton")
     delBtn.Size = UDim2.fromOffset(30, 30)
     delBtn.Position = UDim2.new(1, -38, 0.5, -15)
@@ -327,7 +434,6 @@ local function createRow(point, index)
         refreshEmptyLabel()
     end)
 
-    -- CLICK = TELEPORT
     local clickBtn = Instance.new("TextButton")
     clickBtn.Size = UDim2.new(1, -46, 1, 0)
     clickBtn.Position = UDim2.fromOffset(0, 0)
@@ -369,8 +475,8 @@ saveBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local root = getRoot()
-    if not root then
+    local root, humanoid = getChar()
+    if not root or not humanoid then
         setStatus("No character", RED)
         return
     end
@@ -395,7 +501,7 @@ saveBtn.MouseButton1Click:Connect(function()
 end)
 
 --==================================================
--- DRAG / MOVE
+-- DRAG MAIN PANEL
 --==================================================
 
 local dragging = false
