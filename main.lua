@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (Run-Stop Method)
+-- BIGBOSS TELEPORTER (Final - Safe & Fast)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -20,16 +20,17 @@ local GREEN  = Color3.fromRGB(60, 200, 110)
 local RED    = Color3.fromRGB(220, 70, 70)
 
 --==================================================
--- CONFIG
+-- CONFIG (final balanced values)
 --==================================================
 
 local CONFIG = {
     TeleportDelay   = 0.15,
     CooldownTime    = 2.0,
-    YOffset         = 3,
+    YOffset         = 5,
     UseRandomDelay  = true,
-    HopSize         = 150,
-    HopDelay        = 0.4,   -- 👈 faster pause (was 0.9)
+    HopSize         = 150,    -- 150 studs per step
+    HopDelay        = 0.45,   -- 0.45s pause between steps
+    MaxBounceCheck  = 80,     -- if > 80 studs off target, retry
 }
 
 --==================================================
@@ -84,7 +85,7 @@ local logoDragging = false
 local logoDragStart
 local logoStartPos
 local logoMoved = false
-local DRAG_THRESHOLD = 8
+local DRAG_THRESHOLD = 20
 
 logo.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -114,7 +115,7 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
+logo.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         logoDragging = false
@@ -293,7 +294,7 @@ local function randomBetween(min, max)
 end
 
 --==================================================
--- RUN-STOP TELEPORT
+-- SAFE TELEPORT (final - no anchor, no die, no bounce)
 --==================================================
 
 local function safeTeleport(point)
@@ -319,9 +320,23 @@ local function safeTeleport(point)
     teleporting = true
     lastTeleport = now
 
+    -- Save original health
+    local originalHealth = humanoid.Health
+
+    -- Disable dangerous states during teleport
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    end)
+
+    -- Health protection (restore if damaged mid-TP)
+    local healthConn
+    healthConn = humanoid.HealthChanged:Connect(function(newHealth)
+        if newHealth < originalHealth and newHealth > 0 then
+            pcall(function()
+                humanoid.Health = originalHealth
+            end)
+        end
     end)
 
     local delay = CONFIG.TeleportDelay
@@ -340,14 +355,12 @@ local function safeTeleport(point)
     local totalDistance = (endPos - startPos).Magnitude
     local steps = math.max(1, math.ceil(totalDistance / CONFIG.HopSize))
 
+    -- Move step by step
     for i = 1, steps do
         root, humanoid = getChar()
         if not root or not humanoid then
+            pcall(function() healthConn:Disconnect() end)
             teleporting = false
-            pcall(function()
-                humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-                humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-            end)
             setStatus("Died during TP", RED)
             return false
         end
@@ -357,28 +370,44 @@ local function safeTeleport(point)
 
         setStatus(string.format("Teleporting... %d/%d", i, steps), ORANGE)
 
-        pcall(function() root.Anchored = true end)
+        -- Direct CFrame move (no anchor)
         root.CFrame = CFrame.new(stepPos)
+
+        -- Reset velocity
         pcall(function()
             root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             root.Velocity = Vector3.new(0, 0, 0)
         end)
 
-        task.wait(0.05)
-        pcall(function() root.Anchored = false end)
-
+        -- Pause between steps (server needs time to validate)
         if i < steps then
             task.wait(CONFIG.HopDelay)
         end
     end
 
-    task.wait(0.1)
+    -- Disconnect health protection
+    pcall(function() healthConn:Disconnect() end)
+
+    -- Restore humanoid states
+    task.wait(0.15)
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
         humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
         humanoid.PlatformStand = false
     end)
+
+    -- Final bounce check
+    task.wait(0.3)
+    root = getChar()
+    if root then
+        local finalDist = (root.Position - endPos).Magnitude
+        if finalDist > CONFIG.MaxBounceCheck then
+            teleporting = false
+            setStatus("Bounce detected - retry", RED)
+            return false
+        end
+    end
 
     teleporting = false
     setStatus(string.format("Teleported: %s (%d steps)", point.name, steps), GREEN)
@@ -550,4 +579,4 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] BIGBOSS TELEPORTER (Run-Stop) loaded.")
+print("[BIGBOSS TP] BIGBOSS TELEPORTER loaded.")
