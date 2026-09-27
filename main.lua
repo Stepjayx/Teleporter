@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (Waypoint Safe Path)
+-- BIGBOSS TELEPORTER (Auto Safe Speed when carrying egg)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -15,23 +15,27 @@ local WHITE  = Color3.fromRGB(235, 235, 235)
 local GREY   = Color3.fromRGB(130, 140, 155)
 local GREEN  = Color3.fromRGB(60, 200, 110)
 local RED    = Color3.fromRGB(220, 70, 70)
-local CYAN   = Color3.fromRGB(80, 200, 255)
 
 --==================================================
 -- CONFIG
 --==================================================
 
 local CONFIG = {
-    GlideStartSpeed   = 350,
-    GlideMaxSpeed     = 900,
+    -- Normal (empty hands) — fast
+    FastStartSpeed    = 350,
+    FastMaxSpeed      = 900,
+
+    -- Carrying egg — slow (game accepts delivery)
+    SafeStartSpeed    = 80,
+    SafeMaxSpeed      = 150,
+
     GlideHeight       = 20,
     CooldownTime      = 1.2,
     AutoReturnEnabled = false,
     ReturnPoint       = nil,
     ReturnCooldown    = 1.0,
 
-    -- ⭐ WAYPOINT (safe hub coordinate)
-    -- Character flies here FIRST, then to destination
+    -- ⭐ HARDCODED WAYPOINT
     Waypoint          = Vector3.new(596, 70, -325),
     UseWaypoint       = true,
 }
@@ -58,7 +62,6 @@ gui.IgnoreGuiInset = true
 gui.DisplayOrder = 999
 gui.Parent = player:WaitForChild("PlayerGui")
 
--- Circle logo
 local logo = Instance.new("TextButton")
 logo.Name = "CircleLogo"
 logo.Size = UDim2.fromOffset(55, 55)
@@ -129,11 +132,10 @@ logo.InputEnded:Connect(function(input)
     end
 end)
 
--- Main panel
 local main = Instance.new("Frame")
 main.Name = "Main"
-main.Size = UDim2.fromOffset(320, 510)
-main.Position = UDim2.new(0.5, -160, 0.5, -255)
+main.Size = UDim2.fromOffset(320, 470)
+main.Position = UDim2.new(0.5, -160, 0.5, -235)
 main.BackgroundColor3 = BLACK
 main.BorderSizePixel = 0
 main.Visible = true
@@ -184,53 +186,9 @@ closeBtn.MouseButton1Click:Connect(function()
     logo.Visible = true
 end)
 
--- ⭐ WAYPOINT section
-local waypointLabel = Instance.new("TextLabel")
-waypointLabel.Size = UDim2.new(1, -30, 0, 18)
-waypointLabel.Position = UDim2.fromOffset(15, 52)
-waypointLabel.BackgroundTransparency = 1
-waypointLabel.Text = "WAYPOINT (Safe Hub)"
-waypointLabel.TextColor3 = CYAN
-waypointLabel.TextSize = 10
-waypointLabel.Font = Enum.Font.GothamBold
-waypointLabel.TextXAlignment = Enum.TextXAlignment.Left
-waypointLabel.Parent = main
-
-local waypointDisplay = Instance.new("TextLabel")
-waypointDisplay.Size = UDim2.new(1, -30, 0, 28)
-waypointDisplay.Position = UDim2.fromOffset(15, 72)
-waypointDisplay.BackgroundColor3 = PANEL
-waypointDisplay.BorderSizePixel = 0
-waypointDisplay.Text = string.format("Vector3.new(%d, %d, %d)",
-    CONFIG.Waypoint.X, CONFIG.Waypoint.Y, CONFIG.Waypoint.Z)
-waypointDisplay.TextColor3 = CYAN
-waypointDisplay.TextSize = 11
-waypointDisplay.Font = Enum.Font.Code
-waypointDisplay.TextXAlignment = Enum.TextXAlignment.Center
-waypointDisplay.Parent = main
-
-local waypointCorner = Instance.new("UICorner")
-waypointCorner.CornerRadius = UDim.new(0, 6)
-waypointCorner.Parent = waypointDisplay
-
-local setWaypointBtn = Instance.new("TextButton")
-setWaypointBtn.Size = UDim2.new(1, -30, 0, 30)
-setWaypointBtn.Position = UDim2.fromOffset(15, 104)
-setWaypointBtn.BackgroundColor3 = PANEL2
-setWaypointBtn.Text = "SET WAYPOINT (Current Pos)"
-setWaypointBtn.TextColor3 = CYAN
-setWaypointBtn.TextSize = 11
-setWaypointBtn.Font = Enum.Font.GothamBold
-setWaypointBtn.Parent = main
-
-local setWaypointCorner = Instance.new("UICorner")
-setWaypointCorner.CornerRadius = UDim.new(0, 7)
-setWaypointCorner.Parent = setWaypointBtn
-
--- Name box
 local nameBox = Instance.new("TextBox")
-nameBox.Size = UDim2.new(1, -30, 0, 34)
-nameBox.Position = UDim2.fromOffset(15, 142)
+nameBox.Size = UDim2.new(1, -30, 0, 36)
+nameBox.Position = UDim2.fromOffset(15, 54)
 nameBox.BackgroundColor3 = PANEL2
 nameBox.PlaceholderText = "Setpoint name (area)..."
 nameBox.PlaceholderColor3 = GREY
@@ -246,8 +204,8 @@ nameCorner.CornerRadius = UDim.new(0, 7)
 nameCorner.Parent = nameBox
 
 local saveBtn = Instance.new("TextButton")
-saveBtn.Size = UDim2.new(1, -30, 0, 34)
-saveBtn.Position = UDim2.fromOffset(15, 182)
+saveBtn.Size = UDim2.new(1, -30, 0, 36)
+saveBtn.Position = UDim2.fromOffset(15, 98)
 saveBtn.BackgroundColor3 = ORANGE
 saveBtn.Text = "+ SAVE CURRENT POSITION"
 saveBtn.TextColor3 = BLACK
@@ -259,10 +217,9 @@ local saveCorner = Instance.new("UICorner")
 saveCorner.CornerRadius = UDim.new(0, 7)
 saveCorner.Parent = saveBtn
 
--- Auto Return section
 local autoLabel = Instance.new("TextLabel")
-autoLabel.Size = UDim2.new(1, -30, 0, 16)
-autoLabel.Position = UDim2.fromOffset(15, 222)
+autoLabel.Size = UDim2.new(1, -30, 0, 18)
+autoLabel.Position = UDim2.fromOffset(15, 142)
 autoLabel.BackgroundTransparency = 1
 autoLabel.Text = "AUTO RETURN ON EGG TOUCH"
 autoLabel.TextColor3 = ORANGE
@@ -272,10 +229,10 @@ autoLabel.TextXAlignment = Enum.TextXAlignment.Left
 autoLabel.Parent = main
 
 local setReturnBtn = Instance.new("TextButton")
-setReturnBtn.Size = UDim2.new(1, -30, 0, 30)
-setReturnBtn.Position = UDim2.fromOffset(15, 240)
+setReturnBtn.Size = UDim2.new(1, -30, 0, 32)
+setReturnBtn.Position = UDim2.fromOffset(15, 162)
 setReturnBtn.BackgroundColor3 = PANEL2
-setReturnBtn.Text = "SET RETURN POINT"
+setReturnBtn.Text = "SET RETURN POINT (Current Pos)"
 setReturnBtn.TextColor3 = ORANGE
 setReturnBtn.TextSize = 11
 setReturnBtn.Font = Enum.Font.GothamBold
@@ -286,8 +243,8 @@ setReturnCorner.CornerRadius = UDim.new(0, 7)
 setReturnCorner.Parent = setReturnBtn
 
 local autoToggle = Instance.new("TextButton")
-autoToggle.Size = UDim2.new(1, -30, 0, 30)
-autoToggle.Position = UDim2.fromOffset(15, 274)
+autoToggle.Size = UDim2.new(1, -30, 0, 32)
+autoToggle.Position = UDim2.fromOffset(15, 200)
 autoToggle.BackgroundColor3 = PANEL2
 autoToggle.Text = "Auto Return: OFF"
 autoToggle.TextColor3 = GREY
@@ -301,7 +258,7 @@ autoToggleCorner.Parent = autoToggle
 
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -30, 0, 18)
-statusLabel.Position = UDim2.fromOffset(15, 310)
+statusLabel.Position = UDim2.fromOffset(15, 238)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Ready"
 statusLabel.TextColor3 = GREY
@@ -312,8 +269,8 @@ statusLabel.Parent = main
 
 local list = Instance.new("ScrollingFrame")
 list.Name = "PointList"
-list.Size = UDim2.new(1, -30, 1, -345)
-list.Position = UDim2.fromOffset(15, 330)
+list.Size = UDim2.new(1, -30, 1, -278)
+list.Position = UDim2.fromOffset(15, 260)
 list.BackgroundColor3 = PANEL
 list.BorderSizePixel = 0
 list.ScrollBarThickness = 4
@@ -373,10 +330,41 @@ local function setStatus(text, color)
 end
 
 --==================================================
--- CORE GLIDE (single leg)
+-- 🥚 IS CARRYING EGG?
 --==================================================
 
-local function glideLeg(targetPos, label)
+local function isHoldingEgg()
+    local char = player.Character
+    if not char then return false end
+
+    -- Check character (egg attached to player)
+    for _, obj in ipairs(char:GetChildren()) do
+        if obj:IsA("Tool") and obj.Name:lower():find("egg") then
+            return true
+        end
+        if obj:IsA("Model") and obj.Name:lower():find("egg") then
+            return true
+        end
+    end
+
+    -- Check Backpack
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        for _, obj in ipairs(backpack:GetChildren()) do
+            if obj:IsA("Tool") and obj.Name:lower():find("egg") then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+--==================================================
+-- SINGLE GLIDE LEG
+--==================================================
+
+local function glideLeg(targetPos, startSpeed, maxSpeed)
     local root, humanoid = getChar()
     if not root or not humanoid then return false end
 
@@ -386,10 +374,9 @@ local function glideLeg(targetPos, label)
 
     local useArc = totalDist > 50
     local traveled = 0
-    local connection
-
     local done = false
 
+    local connection
     connection = RunService.Heartbeat:Connect(function(dt)
         if done then return end
 
@@ -401,8 +388,7 @@ local function glideLeg(targetPos, label)
         end
 
         local progress = math.clamp(traveled / totalDist, 0, 1)
-        local currentSpeed = CONFIG.GlideStartSpeed +
-            (CONFIG.GlideMaxSpeed - CONFIG.GlideStartSpeed) * progress
+        local currentSpeed = startSpeed + (maxSpeed - startSpeed) * progress
 
         traveled = traveled + currentSpeed * dt
 
@@ -427,8 +413,7 @@ local function glideLeg(targetPos, label)
         end
     end)
 
-    -- Wait until glide finishes
-    local avgSpeed = (CONFIG.GlideStartSpeed + CONFIG.GlideMaxSpeed) / 2
+    local avgSpeed = (startSpeed + maxSpeed) / 2
     local estimatedTime = totalDist / avgSpeed
     local startWait = tick()
     while not done and (tick() - startWait) < (estimatedTime + 2) do
@@ -440,7 +425,7 @@ local function glideLeg(targetPos, label)
 end
 
 --==================================================
--- FULL GLIDE (with waypoint)
+-- FULL GLIDE
 --==================================================
 
 local function glideToCFrame(targetCFrame)
@@ -450,6 +435,19 @@ local function glideToCFrame(targetCFrame)
     if not root or not humanoid then return false end
 
     gliding = true
+
+    -- 🥚 Auto-detect: pick speed based on egg status
+    local carryingEgg = isHoldingEgg()
+    local startSpeed, maxSpeed
+    if carryingEgg then
+        startSpeed = CONFIG.SafeStartSpeed
+        maxSpeed   = CONFIG.SafeMaxSpeed
+        setStatus("Carrying egg - safe glide", GREEN)
+    else
+        startSpeed = CONFIG.FastStartSpeed
+        maxSpeed   = CONFIG.FastMaxSpeed
+        setStatus("Empty - fast glide", ORANGE)
+    end
 
     local originalHealth = humanoid.Health
 
@@ -475,32 +473,26 @@ local function glideToCFrame(targetCFrame)
         end
     end)
 
-    -- FINAL DESTINATION
     local finalPos = Vector3.new(
         targetCFrame.X,
         targetCFrame.Y + 3,
         targetCFrame.Z
     )
 
-    -- ============================================
-    -- LEG 1: Go to waypoint (safe hub)
-    -- ============================================
+    -- LEG 1: Waypoint
     if CONFIG.UseWaypoint and CONFIG.Waypoint then
         local wp = CONFIG.Waypoint
         local wpPos = Vector3.new(wp.X, wp.Y + 3, wp.Z)
 
-        -- Only use waypoint if it's not too close to current pos
         local curRoot = getChar()
         if curRoot then
             local distToWp = (wpPos - curRoot.Position).Magnitude
             if distToWp > 30 then
-                setStatus("Leg 1/2: To waypoint...", CYAN)
-                glideLeg(wpPos, "Waypoint")
+                setStatus(carryingEgg and "Safe glide: To waypoint..." or "Fast glide: To waypoint...", ORANGE)
+                glideLeg(wpPos, startSpeed, maxSpeed)
 
-                -- Small pause at waypoint
                 task.wait(0.15)
 
-                -- Check still alive
                 local checkRoot = getChar()
                 if not checkRoot then
                     pcall(function() healthConn:Disconnect() end)
@@ -511,15 +503,11 @@ local function glideToCFrame(targetCFrame)
         end
     end
 
-    -- ============================================
-    -- LEG 2: From waypoint to destination
-    -- ============================================
-    setStatus("Leg 2/2: To destination...", ORANGE)
-    glideLeg(finalPos, "Destination")
+    -- LEG 2: Destination
+    setStatus(carryingEgg and "Safe glide: To destination..." or "Fast glide: To destination...", ORANGE)
+    glideLeg(finalPos, startSpeed, maxSpeed)
 
-    -- ============================================
-    -- CLEANUP
-    -- ============================================
+    -- Cleanup
     pcall(function() healthConn:Disconnect() end)
 
     for part, collide in pairs(originalCollide) do
@@ -563,37 +551,6 @@ local function glideTo(point)
 end
 
 --==================================================
--- WAYPOINT BUTTON
---==================================================
-
-setWaypointBtn.MouseButton1Click:Connect(function()
-    local root, humanoid = getChar()
-    if not root then
-        setStatus("No character", RED)
-        return
-    end
-
-    CONFIG.Waypoint = root.Position
-
-    waypointDisplay.Text = string.format("Vector3.new(%d, %d, %d)",
-        math.floor(root.Position.X),
-        math.floor(root.Position.Y),
-        math.floor(root.Position.Z))
-
-    setWaypointBtn.BackgroundColor3 = GREEN
-    setWaypointBtn.Text = "WAYPOINT SET!"
-    setStatus("Waypoint updated", GREEN)
-    task.wait(1.2)
-    setWaypointBtn.BackgroundColor3 = PANEL2
-    setWaypointBtn.Text = "SET WAYPOINT (Current Pos)"
-
-    print(string.format("[BIGBOSS TP] Waypoint set: Vector3.new(%d, %d, %d)",
-        math.floor(root.Position.X),
-        math.floor(root.Position.Y),
-        math.floor(root.Position.Z)))
-end)
-
---==================================================
 -- AUTO RETURN
 --==================================================
 
@@ -620,6 +577,10 @@ local function startAutoReturn()
         if hit and hit.Name:lower():find("egg") then
             lastReturn = now
             setStatus("Egg touched! Returning...", ORANGE)
+
+            -- Small delay so egg attaches to character FIRST
+            task.wait(0.3)
+
             glideToCFrame(CONFIG.ReturnPoint)
             setStatus("Returned to base", GREEN)
         end
@@ -640,7 +601,7 @@ setReturnBtn.MouseButton1Click:Connect(function()
     setStatus("Return point saved", GREEN)
     task.wait(1.2)
     setReturnBtn.BackgroundColor3 = PANEL2
-    setReturnBtn.Text = "SET RETURN POINT"
+    setReturnBtn.Text = "SET RETURN POINT (Current Pos)"
 
     print("[BIGBOSS TP] Return point set")
 end)
@@ -685,7 +646,7 @@ end)
 local function createRow(point, index)
     local row = Instance.new("Frame")
     row.Name = "Point_" .. index
-    row.Size = UDim2.new(1, -12, 0, 44)
+    row.Size = UDim2.new(1, -12, 0, 46)
     row.BackgroundColor3 = PANEL2
     row.BorderSizePixel = 0
     row.Parent = list
@@ -707,12 +668,12 @@ local function createRow(point, index)
     label.Parent = row
 
     local delBtn = Instance.new("TextButton")
-    delBtn.Size = UDim2.fromOffset(28, 28)
-    delBtn.Position = UDim2.new(1, -36, 0.5, -14)
+    delBtn.Size = UDim2.fromOffset(30, 30)
+    delBtn.Position = UDim2.new(1, -38, 0.5, -15)
     delBtn.BackgroundColor3 = Color3.fromRGB(60, 25, 25)
     delBtn.Text = "X"
     delBtn.TextColor3 = RED
-    delBtn.TextSize = 13
+    delBtn.TextSize = 14
     delBtn.Font = Enum.Font.GothamBold
     delBtn.Parent = row
 
@@ -732,7 +693,7 @@ local function createRow(point, index)
     end)
 
     local clickBtn = Instance.new("TextButton")
-    clickBtn.Size = UDim2.new(1, -44, 1, 0)
+    clickBtn.Size = UDim2.new(1, -46, 1, 0)
     clickBtn.Position = UDim2.fromOffset(0, 0)
     clickBtn.BackgroundTransparency = 1
     clickBtn.Text = ""
@@ -842,6 +803,6 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] Waypoint Teleporter loaded.")
+print("[BIGBOSS TP] Teleporter loaded")
 print(string.format("[BIGBOSS TP] Waypoint: Vector3.new(%d, %d, %d)",
     CONFIG.Waypoint.X, CONFIG.Waypoint.Y, CONFIG.Waypoint.Z))
