@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (Anchor + Burst)
+-- BIGBOSS TELEPORTER (Run-Stop Method)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -26,11 +26,10 @@ local RED    = Color3.fromRGB(220, 70, 70)
 local CONFIG = {
     TeleportDelay   = 0.15,
     CooldownTime    = 2.0,
-    YOffset         = 10,
+    YOffset         = 3,
     UseRandomDelay  = true,
-    HopSize         = 400,    -- studs per hop
-    HopDelay        = 0.08,   -- pause between hops
-    HopAnchorTime   = 0.05,   -- how long to anchor each hop
+    HopSize         = 150,
+    HopDelay        = 0.4,   -- 👈 faster pause (was 0.9)
 }
 
 --==================================================
@@ -294,37 +293,8 @@ local function randomBetween(min, max)
 end
 
 --==================================================
--- ANCHOR + BURST TELEPORT
+-- RUN-STOP TELEPORT
 --==================================================
-
-local function anchoredHop(targetPos)
-    local root, humanoid = getChar()
-    if not root or not humanoid then return false end
-
-    -- Disable physics
-    pcall(function()
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    end)
-
-    -- Anchor before moving (server accepts position instantly)
-    pcall(function() root.Anchored = true end)
-
-    -- Move
-    root.CFrame = CFrame.new(targetPos)
-
-    -- Reset velocity
-    pcall(function()
-        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        root.Velocity = Vector3.new(0, 0, 0)
-    end)
-
-    task.wait(CONFIG.HopAnchorTime)
-
-    -- Unanchor
-    pcall(function() root.Anchored = false end)
-
-    return true
-end
 
 local function safeTeleport(point)
     if teleporting then
@@ -349,6 +319,11 @@ local function safeTeleport(point)
     teleporting = true
     lastTeleport = now
 
+    pcall(function()
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    end)
+
     local delay = CONFIG.TeleportDelay
     if CONFIG.UseRandomDelay then
         delay = delay + randomBetween(0, 0.1)
@@ -363,49 +338,51 @@ local function safeTeleport(point)
     )
 
     local totalDistance = (endPos - startPos).Magnitude
-    local hops = math.max(1, math.ceil(totalDistance / CONFIG.HopSize))
+    local steps = math.max(1, math.ceil(totalDistance / CONFIG.HopSize))
 
-    -- Burst through each hop
-    for i = 1, hops do
-        local t = i / hops
-        local hopPos = startPos:Lerp(endPos, t)
-
+    for i = 1, steps do
         root, humanoid = getChar()
         if not root or not humanoid then
             teleporting = false
-            setStatus("Died during teleport", RED)
+            pcall(function()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+            end)
+            setStatus("Died during TP", RED)
             return false
         end
 
-        anchoredHop(hopPos)
+        local t = i / steps
+        local stepPos = startPos:Lerp(endPos, t)
 
-        if i < hops then
+        setStatus(string.format("Teleporting... %d/%d", i, steps), ORANGE)
+
+        pcall(function() root.Anchored = true end)
+        root.CFrame = CFrame.new(stepPos)
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            root.Velocity = Vector3.new(0, 0, 0)
+        end)
+
+        task.wait(0.05)
+        pcall(function() root.Anchored = false end)
+
+        if i < steps then
             task.wait(CONFIG.HopDelay)
         end
     end
 
-    -- Restore walking state
     task.wait(0.1)
     pcall(function()
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
         humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
         humanoid.PlatformStand = false
     end)
 
-    -- Verify final position
-    task.wait(0.3)
-    root = getChar()
-    if root then
-        local finalDist = (root.Position - endPos).Magnitude
-        if finalDist > 100 then
-            teleporting = false
-            setStatus("Bounce detected — try again", RED)
-            return false
-        end
-    end
-
     teleporting = false
-    setStatus(string.format("Teleported: %s (%d hops)", point.name, hops), GREEN)
-    print(string.format("[BIGBOSS TP] Teleported to %s (%d hops, %.0f studs)", point.name, hops, totalDistance))
+    setStatus(string.format("Teleported: %s (%d steps)", point.name, steps), GREEN)
+    print(string.format("[BIGBOSS TP] Teleported to %s (%d steps, %.0f studs)", point.name, steps, totalDistance))
     return true
 end
 
@@ -573,4 +550,4 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] BIGBOSS TELEPORTER (Anchor + Burst) loaded.")
+print("[BIGBOSS TP] BIGBOSS TELEPORTER (Run-Stop) loaded.")
