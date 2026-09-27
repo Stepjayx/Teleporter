@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (with Circle Logo)
+-- BIGBOSS TELEPORTER (Anchor + Burst)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -28,6 +28,9 @@ local CONFIG = {
     CooldownTime    = 2.0,
     YOffset         = 10,
     UseRandomDelay  = true,
+    HopSize         = 400,    -- studs per hop
+    HopDelay        = 0.08,   -- pause between hops
+    HopAnchorTime   = 0.05,   -- how long to anchor each hop
 }
 
 --==================================================
@@ -51,7 +54,7 @@ gui.DisplayOrder = 999
 gui.Parent = player:WaitForChild("PlayerGui")
 
 --==================================================
--- CIRCLE LOGO (hidden by default)
+-- CIRCLE LOGO
 --==================================================
 
 local logo = Instance.new("TextButton")
@@ -78,12 +81,10 @@ logoStroke.Thickness = 2
 logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 logoStroke.Parent = logo
 
--- LOGO DRAG / TAP
 local logoDragging = false
 local logoDragStart
 local logoStartPos
 local logoMoved = false
-local logoPressStart = 0
 local DRAG_THRESHOLD = 8
 
 logo.InputBegan:Connect(function(input)
@@ -91,7 +92,6 @@ logo.InputBegan:Connect(function(input)
     or input.UserInputType == Enum.UserInputType.Touch then
         logoDragging = true
         logoMoved = false
-        logoPressStart = tick()
         logoDragStart = input.Position
         logoStartPos = logo.Position
     end
@@ -120,11 +120,8 @@ UserInputService.InputEnded:Connect(function(input)
     or input.UserInputType == Enum.UserInputType.Touch then
         logoDragging = false
         if not logoMoved then
-            local pressDuration = tick() - logoPressStart
-            if pressDuration < 0.5 then
-                main.Visible = true
-                logo.Visible = false
-            end
+            main.Visible = true
+            logo.Visible = false
         end
         logoMoved = false
     end
@@ -146,10 +143,6 @@ main.Parent = gui
 local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 10)
 mainCorner.Parent = main
-
---==================================================
--- HEADER
---==================================================
 
 local header = Instance.new("Frame")
 header.Name = "Header"
@@ -192,10 +185,6 @@ closeBtn.MouseButton1Click:Connect(function()
     logo.Visible = true
 end)
 
---==================================================
--- INPUT + SAVE BUTTON
---==================================================
-
 local nameBox = Instance.new("TextBox")
 nameBox.Size = UDim2.new(1, -30, 0, 36)
 nameBox.Position = UDim2.fromOffset(15, 54)
@@ -227,10 +216,6 @@ local saveCorner = Instance.new("UICorner")
 saveCorner.CornerRadius = UDim.new(0, 7)
 saveCorner.Parent = saveBtn
 
---==================================================
--- STATUS LABEL
---==================================================
-
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -30, 0, 18)
 statusLabel.Position = UDim2.fromOffset(15, 138)
@@ -241,10 +226,6 @@ statusLabel.TextSize = 10
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = main
-
---==================================================
--- SCROLLING LIST
---==================================================
 
 local list = Instance.new("ScrollingFrame")
 list.Name = "PointList"
@@ -313,8 +294,37 @@ local function randomBetween(min, max)
 end
 
 --==================================================
--- SAFE TELEPORT
+-- ANCHOR + BURST TELEPORT
 --==================================================
+
+local function anchoredHop(targetPos)
+    local root, humanoid = getChar()
+    if not root or not humanoid then return false end
+
+    -- Disable physics
+    pcall(function()
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+
+    -- Anchor before moving (server accepts position instantly)
+    pcall(function() root.Anchored = true end)
+
+    -- Move
+    root.CFrame = CFrame.new(targetPos)
+
+    -- Reset velocity
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.Velocity = Vector3.new(0, 0, 0)
+    end)
+
+    task.wait(CONFIG.HopAnchorTime)
+
+    -- Unanchor
+    pcall(function() root.Anchored = false end)
+
+    return true
+end
 
 local function safeTeleport(point)
     if teleporting then
@@ -324,7 +334,6 @@ local function safeTeleport(point)
 
     local now = tick()
     local elapsed = now - lastTeleport
-
     if elapsed < CONFIG.CooldownTime then
         local waitTime = CONFIG.CooldownTime - elapsed
         setStatus(string.format("Cooldown: %.1fs", waitTime), RED)
@@ -346,37 +355,57 @@ local function safeTeleport(point)
     end
     task.wait(delay)
 
-    root, humanoid = getChar()
-    if not root or not humanoid then
-        teleporting = false
-        setStatus("Character gone", RED)
-        return false
-    end
-
-    pcall(function()
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    end)
-    task.wait(0.05)
-
-    root.CFrame = CFrame.new(
+    local startPos = root.Position
+    local endPos = Vector3.new(
         point.cframe.X,
         point.cframe.Y + CONFIG.YOffset,
         point.cframe.Z
     )
-    pcall(function()
-        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        root.Velocity = Vector3.new(0, 0, 0)
-    end)
 
+    local totalDistance = (endPos - startPos).Magnitude
+    local hops = math.max(1, math.ceil(totalDistance / CONFIG.HopSize))
+
+    -- Burst through each hop
+    for i = 1, hops do
+        local t = i / hops
+        local hopPos = startPos:Lerp(endPos, t)
+
+        root, humanoid = getChar()
+        if not root or not humanoid then
+            teleporting = false
+            setStatus("Died during teleport", RED)
+            return false
+        end
+
+        anchoredHop(hopPos)
+
+        if i < hops then
+            task.wait(CONFIG.HopDelay)
+        end
+    end
+
+    -- Restore walking state
     task.wait(0.1)
     pcall(function()
         humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
         humanoid.PlatformStand = false
     end)
 
+    -- Verify final position
+    task.wait(0.3)
+    root = getChar()
+    if root then
+        local finalDist = (root.Position - endPos).Magnitude
+        if finalDist > 100 then
+            teleporting = false
+            setStatus("Bounce detected — try again", RED)
+            return false
+        end
+    end
+
     teleporting = false
-    setStatus("Teleported: " .. point.name, GREEN)
-    print("[BIGBOSS TP] Teleported to: " .. point.name)
+    setStatus(string.format("Teleported: %s (%d hops)", point.name, hops), GREEN)
+    print(string.format("[BIGBOSS TP] Teleported to %s (%d hops, %.0f studs)", point.name, hops, totalDistance))
     return true
 end
 
@@ -544,4 +573,4 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] BIGBOSS TELEPORTER loaded.")
+print("[BIGBOSS TP] BIGBOSS TELEPORTER (Anchor + Burst) loaded.")
