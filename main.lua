@@ -1,15 +1,11 @@
 --==================================================
--- BIGBOSS TELEPORTER (L-Shaped Glide)
+-- BIGBOSS TELEPORTER (Waypoint Safe Path)
 --==================================================
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
-
---==================================================
--- COLORS
---==================================================
 
 local BLACK  = Color3.fromRGB(7, 9, 14)
 local PANEL  = Color3.fromRGB(15, 20, 32)
@@ -19,20 +15,25 @@ local WHITE  = Color3.fromRGB(235, 235, 235)
 local GREY   = Color3.fromRGB(130, 140, 155)
 local GREEN  = Color3.fromRGB(60, 200, 110)
 local RED    = Color3.fromRGB(220, 70, 70)
+local CYAN   = Color3.fromRGB(80, 200, 255)
 
 --==================================================
 -- CONFIG
 --==================================================
 
 local CONFIG = {
-    GlideStartSpeed = 350,
-    GlideMaxSpeed   = 900,
-    GlideHeight     = 20,
-    CooldownTime    = 1.2,
-    DescentSpeed    = 60,
+    GlideStartSpeed   = 350,
+    GlideMaxSpeed     = 900,
+    GlideHeight       = 20,
+    CooldownTime      = 1.2,
     AutoReturnEnabled = false,
-    ReturnPoint     = nil,
-    ReturnCooldown  = 1.0,
+    ReturnPoint       = nil,
+    ReturnCooldown    = 1.0,
+
+    -- ⭐ WAYPOINT (safe hub coordinate)
+    -- Character flies here FIRST, then to destination
+    Waypoint          = Vector3.new(596, 70, -325),
+    UseWaypoint       = true,
 }
 
 --==================================================
@@ -57,10 +58,7 @@ gui.IgnoreGuiInset = true
 gui.DisplayOrder = 999
 gui.Parent = player:WaitForChild("PlayerGui")
 
---==================================================
--- CIRCLE LOGO
---==================================================
-
+-- Circle logo
 local logo = Instance.new("TextButton")
 logo.Name = "CircleLogo"
 logo.Size = UDim2.fromOffset(55, 55)
@@ -131,14 +129,11 @@ logo.InputEnded:Connect(function(input)
     end
 end)
 
---==================================================
--- MAIN PANEL
---==================================================
-
+-- Main panel
 local main = Instance.new("Frame")
 main.Name = "Main"
-main.Size = UDim2.fromOffset(320, 480)
-main.Position = UDim2.new(0.5, -160, 0.5, -240)
+main.Size = UDim2.fromOffset(320, 510)
+main.Position = UDim2.new(0.5, -160, 0.5, -255)
 main.BackgroundColor3 = BLACK
 main.BorderSizePixel = 0
 main.Visible = true
@@ -189,9 +184,53 @@ closeBtn.MouseButton1Click:Connect(function()
     logo.Visible = true
 end)
 
+-- ⭐ WAYPOINT section
+local waypointLabel = Instance.new("TextLabel")
+waypointLabel.Size = UDim2.new(1, -30, 0, 18)
+waypointLabel.Position = UDim2.fromOffset(15, 52)
+waypointLabel.BackgroundTransparency = 1
+waypointLabel.Text = "WAYPOINT (Safe Hub)"
+waypointLabel.TextColor3 = CYAN
+waypointLabel.TextSize = 10
+waypointLabel.Font = Enum.Font.GothamBold
+waypointLabel.TextXAlignment = Enum.TextXAlignment.Left
+waypointLabel.Parent = main
+
+local waypointDisplay = Instance.new("TextLabel")
+waypointDisplay.Size = UDim2.new(1, -30, 0, 28)
+waypointDisplay.Position = UDim2.fromOffset(15, 72)
+waypointDisplay.BackgroundColor3 = PANEL
+waypointDisplay.BorderSizePixel = 0
+waypointDisplay.Text = string.format("Vector3.new(%d, %d, %d)",
+    CONFIG.Waypoint.X, CONFIG.Waypoint.Y, CONFIG.Waypoint.Z)
+waypointDisplay.TextColor3 = CYAN
+waypointDisplay.TextSize = 11
+waypointDisplay.Font = Enum.Font.Code
+waypointDisplay.TextXAlignment = Enum.TextXAlignment.Center
+waypointDisplay.Parent = main
+
+local waypointCorner = Instance.new("UICorner")
+waypointCorner.CornerRadius = UDim.new(0, 6)
+waypointCorner.Parent = waypointDisplay
+
+local setWaypointBtn = Instance.new("TextButton")
+setWaypointBtn.Size = UDim2.new(1, -30, 0, 30)
+setWaypointBtn.Position = UDim2.fromOffset(15, 104)
+setWaypointBtn.BackgroundColor3 = PANEL2
+setWaypointBtn.Text = "SET WAYPOINT (Current Pos)"
+setWaypointBtn.TextColor3 = CYAN
+setWaypointBtn.TextSize = 11
+setWaypointBtn.Font = Enum.Font.GothamBold
+setWaypointBtn.Parent = main
+
+local setWaypointCorner = Instance.new("UICorner")
+setWaypointCorner.CornerRadius = UDim.new(0, 7)
+setWaypointCorner.Parent = setWaypointBtn
+
+-- Name box
 local nameBox = Instance.new("TextBox")
-nameBox.Size = UDim2.new(1, -30, 0, 36)
-nameBox.Position = UDim2.fromOffset(15, 54)
+nameBox.Size = UDim2.new(1, -30, 0, 34)
+nameBox.Position = UDim2.fromOffset(15, 142)
 nameBox.BackgroundColor3 = PANEL2
 nameBox.PlaceholderText = "Setpoint name (area)..."
 nameBox.PlaceholderColor3 = GREY
@@ -207,8 +246,8 @@ nameCorner.CornerRadius = UDim.new(0, 7)
 nameCorner.Parent = nameBox
 
 local saveBtn = Instance.new("TextButton")
-saveBtn.Size = UDim2.new(1, -30, 0, 36)
-saveBtn.Position = UDim2.fromOffset(15, 98)
+saveBtn.Size = UDim2.new(1, -30, 0, 34)
+saveBtn.Position = UDim2.fromOffset(15, 182)
 saveBtn.BackgroundColor3 = ORANGE
 saveBtn.Text = "+ SAVE CURRENT POSITION"
 saveBtn.TextColor3 = BLACK
@@ -220,9 +259,10 @@ local saveCorner = Instance.new("UICorner")
 saveCorner.CornerRadius = UDim.new(0, 7)
 saveCorner.Parent = saveBtn
 
+-- Auto Return section
 local autoLabel = Instance.new("TextLabel")
-autoLabel.Size = UDim2.new(1, -30, 0, 18)
-autoLabel.Position = UDim2.fromOffset(15, 142)
+autoLabel.Size = UDim2.new(1, -30, 0, 16)
+autoLabel.Position = UDim2.fromOffset(15, 222)
 autoLabel.BackgroundTransparency = 1
 autoLabel.Text = "AUTO RETURN ON EGG TOUCH"
 autoLabel.TextColor3 = ORANGE
@@ -232,10 +272,10 @@ autoLabel.TextXAlignment = Enum.TextXAlignment.Left
 autoLabel.Parent = main
 
 local setReturnBtn = Instance.new("TextButton")
-setReturnBtn.Size = UDim2.new(1, -30, 0, 32)
-setReturnBtn.Position = UDim2.fromOffset(15, 162)
+setReturnBtn.Size = UDim2.new(1, -30, 0, 30)
+setReturnBtn.Position = UDim2.fromOffset(15, 240)
 setReturnBtn.BackgroundColor3 = PANEL2
-setReturnBtn.Text = "SET RETURN POINT (Current Pos)"
+setReturnBtn.Text = "SET RETURN POINT"
 setReturnBtn.TextColor3 = ORANGE
 setReturnBtn.TextSize = 11
 setReturnBtn.Font = Enum.Font.GothamBold
@@ -246,8 +286,8 @@ setReturnCorner.CornerRadius = UDim.new(0, 7)
 setReturnCorner.Parent = setReturnBtn
 
 local autoToggle = Instance.new("TextButton")
-autoToggle.Size = UDim2.new(1, -30, 0, 32)
-autoToggle.Position = UDim2.fromOffset(15, 200)
+autoToggle.Size = UDim2.new(1, -30, 0, 30)
+autoToggle.Position = UDim2.fromOffset(15, 274)
 autoToggle.BackgroundColor3 = PANEL2
 autoToggle.Text = "Auto Return: OFF"
 autoToggle.TextColor3 = GREY
@@ -261,7 +301,7 @@ autoToggleCorner.Parent = autoToggle
 
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -30, 0, 18)
-statusLabel.Position = UDim2.fromOffset(15, 238)
+statusLabel.Position = UDim2.fromOffset(15, 310)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Ready"
 statusLabel.TextColor3 = GREY
@@ -272,8 +312,8 @@ statusLabel.Parent = main
 
 local list = Instance.new("ScrollingFrame")
 list.Name = "PointList"
-list.Size = UDim2.new(1, -30, 1, -278)
-list.Position = UDim2.fromOffset(15, 260)
+list.Size = UDim2.new(1, -30, 1, -345)
+list.Position = UDim2.fromOffset(15, 330)
 list.BackgroundColor3 = PANEL
 list.BorderSizePixel = 0
 list.ScrollBarThickness = 4
@@ -299,9 +339,9 @@ listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = list
 
 local emptyLabel = Instance.new("TextLabel")
-emptyLabel.Size = UDim2.new(1, -12, 0, 60)
+emptyLabel.Size = UDim2.new(1, -12, 0, 50)
 emptyLabel.BackgroundTransparency = 1
-emptyLabel.Text = "No setpoints yet.\nType a name and tap SAVE."
+emptyLabel.Text = "No setpoints yet."
 emptyLabel.TextColor3 = GREY
 emptyLabel.TextSize = 11
 emptyLabel.Font = Enum.Font.Gotham
@@ -333,7 +373,74 @@ local function setStatus(text, color)
 end
 
 --==================================================
--- L-SHAPED GLIDE
+-- CORE GLIDE (single leg)
+--==================================================
+
+local function glideLeg(targetPos, label)
+    local root, humanoid = getChar()
+    if not root or not humanoid then return false end
+
+    local startPos = root.Position
+    local totalDist = (targetPos - startPos).Magnitude
+    if totalDist < 3 then return true end
+
+    local useArc = totalDist > 50
+    local traveled = 0
+    local connection
+
+    local done = false
+
+    connection = RunService.Heartbeat:Connect(function(dt)
+        if done then return end
+
+        local currentRoot, currentHum = getChar()
+        if not currentRoot or not currentHum then
+            connection:Disconnect()
+            done = true
+            return
+        end
+
+        local progress = math.clamp(traveled / totalDist, 0, 1)
+        local currentSpeed = CONFIG.GlideStartSpeed +
+            (CONFIG.GlideMaxSpeed - CONFIG.GlideStartSpeed) * progress
+
+        traveled = traveled + currentSpeed * dt
+
+        local t = math.clamp(traveled / totalDist, 0, 1)
+        local newPos = startPos:Lerp(targetPos, t)
+
+        if useArc then
+            local arcHeight = math.sin(t * math.pi) * CONFIG.GlideHeight
+            newPos = newPos + Vector3.new(0, arcHeight, 0)
+        end
+
+        currentRoot.CFrame = CFrame.new(newPos)
+
+        pcall(function()
+            currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            currentRoot.Velocity = Vector3.new(0, 0, 0)
+        end)
+
+        if t >= 1 then
+            connection:Disconnect()
+            done = true
+        end
+    end)
+
+    -- Wait until glide finishes
+    local avgSpeed = (CONFIG.GlideStartSpeed + CONFIG.GlideMaxSpeed) / 2
+    local estimatedTime = totalDist / avgSpeed
+    local startWait = tick()
+    while not done and (tick() - startWait) < (estimatedTime + 2) do
+        task.wait(0.05)
+    end
+
+    pcall(function() connection:Disconnect() end)
+    return true
+end
+
+--==================================================
+-- FULL GLIDE (with waypoint)
 --==================================================
 
 local function glideToCFrame(targetCFrame)
@@ -368,110 +475,51 @@ local function glideToCFrame(targetCFrame)
         end
     end)
 
-    -- PHASE 1: Horizontal glide
-    local startPos = root.Position
-    local targetX = targetCFrame.X
-    local targetY = targetCFrame.Y
-    local targetZ = targetCFrame.Z
+    -- FINAL DESTINATION
+    local finalPos = Vector3.new(
+        targetCFrame.X,
+        targetCFrame.Y + 3,
+        targetCFrame.Z
+    )
 
-    local cruiseY = math.max(startPos.Y, targetY + CONFIG.GlideHeight)
-    local horizontalStart = Vector3.new(startPos.X, cruiseY, startPos.Z)
-    local horizontalEnd = Vector3.new(targetX, cruiseY, targetZ)
+    -- ============================================
+    -- LEG 1: Go to waypoint (safe hub)
+    -- ============================================
+    if CONFIG.UseWaypoint and CONFIG.Waypoint then
+        local wp = CONFIG.Waypoint
+        local wpPos = Vector3.new(wp.X, wp.Y + 3, wp.Z)
 
-    local horizontalDist = (horizontalEnd - horizontalStart).Magnitude
+        -- Only use waypoint if it's not too close to current pos
+        local curRoot = getChar()
+        if curRoot then
+            local distToWp = (wpPos - curRoot.Position).Magnitude
+            if distToWp > 30 then
+                setStatus("Leg 1/2: To waypoint...", CYAN)
+                glideLeg(wpPos, "Waypoint")
 
-    setStatus("Phase 1: Horizontal glide...", ORANGE)
+                -- Small pause at waypoint
+                task.wait(0.15)
 
-    if horizontalDist > 5 then
-        local traveled = 0
-        local connection
-        connection = RunService.Heartbeat:Connect(function(dt)
-            local currentRoot, currentHum = getChar()
-            if not currentRoot or not currentHum then
-                connection:Disconnect()
-                healthConn:Disconnect()
-                gliding = false
-                return
+                -- Check still alive
+                local checkRoot = getChar()
+                if not checkRoot then
+                    pcall(function() healthConn:Disconnect() end)
+                    gliding = false
+                    return false
+                end
             end
-
-            local progress = math.clamp(traveled / horizontalDist, 0, 1)
-            local speed = CONFIG.GlideStartSpeed +
-                (CONFIG.GlideMaxSpeed - CONFIG.GlideStartSpeed) * progress
-
-            traveled = traveled + speed * dt
-
-            local t = math.clamp(traveled / horizontalDist, 0, 1)
-            local newPos = horizontalStart:Lerp(horizontalEnd, t)
-
-            currentRoot.CFrame = CFrame.new(newPos)
-
-            pcall(function()
-                currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                currentRoot.Velocity = Vector3.new(0, 0, 0)
-            end)
-
-            if t >= 1 then
-                connection:Disconnect()
-            end
-        end)
-
-        local avgSpeed = (CONFIG.GlideStartSpeed + CONFIG.GlideMaxSpeed) / 2
-        local horizontalTime = horizontalDist / avgSpeed
-        task.wait(horizontalTime + 0.15)
-
-        pcall(function() connection:Disconnect() end)
+        end
     end
 
-    -- PHASE 2: Safe vertical drop
-    root, humanoid = getChar()
-    if not root or not humanoid then
-        pcall(function() healthConn:Disconnect() end)
-        gliding = false
-        return false
-    end
+    -- ============================================
+    -- LEG 2: From waypoint to destination
+    -- ============================================
+    setStatus("Leg 2/2: To destination...", ORANGE)
+    glideLeg(finalPos, "Destination")
 
-    local dropStart = root.Position
-    local dropEnd = Vector3.new(targetX, targetY + 3, targetZ)
-    local dropDist = (dropStart.Y - dropEnd.Y)
-
-    setStatus("Phase 2: Landing...", ORANGE)
-
-    if dropDist > 3 then
-        local descentSpeed = CONFIG.DescentSpeed
-        local descentTime = dropDist / descentSpeed
-
-        local elapsed = 0
-        local connection
-        connection = RunService.Heartbeat:Connect(function(dt)
-            local currentRoot, currentHum = getChar()
-            if not currentRoot or not currentHum then
-                connection:Disconnect()
-                healthConn:Disconnect()
-                gliding = false
-                return
-            end
-
-            elapsed = elapsed + dt
-            local t = math.clamp(elapsed / descentTime, 0, 1)
-
-            local newPos = dropStart:Lerp(dropEnd, t)
-            currentRoot.CFrame = CFrame.new(newPos)
-
-            pcall(function()
-                currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                currentRoot.Velocity = Vector3.new(0, 0, 0)
-            end)
-
-            if t >= 1 then
-                connection:Disconnect()
-            end
-        end)
-
-        task.wait(descentTime + 0.15)
-        pcall(function() connection:Disconnect() end)
-    end
-
+    -- ============================================
     -- CLEANUP
+    -- ============================================
     pcall(function() healthConn:Disconnect() end)
 
     for part, collide in pairs(originalCollide) do
@@ -480,7 +528,7 @@ local function glideToCFrame(targetCFrame)
         end
     end
 
-    task.wait(0.05)
+    task.wait(0.1)
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
@@ -507,13 +555,43 @@ local function glideTo(point)
     end
 
     lastTeleport = now
-    setStatus("Gliding...", ORANGE)
     local ok = glideToCFrame(point.cframe)
     if ok then
         setStatus("Arrived: " .. point.name, GREEN)
     end
     return ok
 end
+
+--==================================================
+-- WAYPOINT BUTTON
+--==================================================
+
+setWaypointBtn.MouseButton1Click:Connect(function()
+    local root, humanoid = getChar()
+    if not root then
+        setStatus("No character", RED)
+        return
+    end
+
+    CONFIG.Waypoint = root.Position
+
+    waypointDisplay.Text = string.format("Vector3.new(%d, %d, %d)",
+        math.floor(root.Position.X),
+        math.floor(root.Position.Y),
+        math.floor(root.Position.Z))
+
+    setWaypointBtn.BackgroundColor3 = GREEN
+    setWaypointBtn.Text = "WAYPOINT SET!"
+    setStatus("Waypoint updated", GREEN)
+    task.wait(1.2)
+    setWaypointBtn.BackgroundColor3 = PANEL2
+    setWaypointBtn.Text = "SET WAYPOINT (Current Pos)"
+
+    print(string.format("[BIGBOSS TP] Waypoint set: Vector3.new(%d, %d, %d)",
+        math.floor(root.Position.X),
+        math.floor(root.Position.Y),
+        math.floor(root.Position.Z)))
+end)
 
 --==================================================
 -- AUTO RETURN
@@ -562,7 +640,7 @@ setReturnBtn.MouseButton1Click:Connect(function()
     setStatus("Return point saved", GREEN)
     task.wait(1.2)
     setReturnBtn.BackgroundColor3 = PANEL2
-    setReturnBtn.Text = "SET RETURN POINT (Current Pos)"
+    setReturnBtn.Text = "SET RETURN POINT"
 
     print("[BIGBOSS TP] Return point set")
 end)
@@ -607,7 +685,7 @@ end)
 local function createRow(point, index)
     local row = Instance.new("Frame")
     row.Name = "Point_" .. index
-    row.Size = UDim2.new(1, -12, 0, 46)
+    row.Size = UDim2.new(1, -12, 0, 44)
     row.BackgroundColor3 = PANEL2
     row.BorderSizePixel = 0
     row.Parent = list
@@ -629,12 +707,12 @@ local function createRow(point, index)
     label.Parent = row
 
     local delBtn = Instance.new("TextButton")
-    delBtn.Size = UDim2.fromOffset(30, 30)
-    delBtn.Position = UDim2.new(1, -38, 0.5, -15)
+    delBtn.Size = UDim2.fromOffset(28, 28)
+    delBtn.Position = UDim2.new(1, -36, 0.5, -14)
     delBtn.BackgroundColor3 = Color3.fromRGB(60, 25, 25)
     delBtn.Text = "X"
     delBtn.TextColor3 = RED
-    delBtn.TextSize = 14
+    delBtn.TextSize = 13
     delBtn.Font = Enum.Font.GothamBold
     delBtn.Parent = row
 
@@ -654,7 +732,7 @@ local function createRow(point, index)
     end)
 
     local clickBtn = Instance.new("TextButton")
-    clickBtn.Size = UDim2.new(1, -46, 1, 0)
+    clickBtn.Size = UDim2.new(1, -44, 1, 0)
     clickBtn.Position = UDim2.fromOffset(0, 0)
     clickBtn.BackgroundTransparency = 1
     clickBtn.Text = ""
@@ -764,4 +842,6 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] L-Shaped Glide Teleporter loaded.")
+print("[BIGBOSS TP] Waypoint Teleporter loaded.")
+print(string.format("[BIGBOSS TP] Waypoint: Vector3.new(%d, %d, %d)",
+    CONFIG.Waypoint.X, CONFIG.Waypoint.Y, CONFIG.Waypoint.Z))
