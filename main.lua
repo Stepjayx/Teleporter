@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (Auto Safe Speed when carrying egg)
+-- BIGBOSS TELEPORTER (Fixed Glide - No Death)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -21,28 +21,21 @@ local RED    = Color3.fromRGB(220, 70, 70)
 --==================================================
 
 local CONFIG = {
-    -- Normal (empty hands) — fast
-    FastStartSpeed    = 350,
-    FastMaxSpeed      = 900,
-
-    -- Carrying egg — slow (game accepts delivery)
-    SafeStartSpeed    = 80,
-    SafeMaxSpeed      = 150,
-
-    GlideHeight       = 20,
-    CooldownTime      = 1.2,
-    AutoReturnEnabled = false,
-    ReturnPoint       = nil,
-    ReturnCooldown    = 1.0,
+    GlideStartSpeed   = 300,
+    GlideMaxSpeed     = 700,
+    GlideHeight       = 80,        -- 👈 HIGH arc
+    LandYOffset       = 4,         -- small drop at landing
+    LandingSpeed      = 30,        -- slow descent at end
+    CooldownTime      = 1.5,
 
     -- ⭐ HARDCODED WAYPOINT
     Waypoint          = Vector3.new(596, 70, -325),
     UseWaypoint       = true,
-}
 
---==================================================
--- STATE
---==================================================
+    AutoReturnEnabled = false,
+    ReturnPoint       = nil,
+    ReturnCooldown    = 1.0,
+}
 
 local savedPoints = {}
 local gliding = false
@@ -330,41 +323,10 @@ local function setStatus(text, color)
 end
 
 --==================================================
--- 🥚 IS CARRYING EGG?
+-- GLIDE LEG (single)
 --==================================================
 
-local function isHoldingEgg()
-    local char = player.Character
-    if not char then return false end
-
-    -- Check character (egg attached to player)
-    for _, obj in ipairs(char:GetChildren()) do
-        if obj:IsA("Tool") and obj.Name:lower():find("egg") then
-            return true
-        end
-        if obj:IsA("Model") and obj.Name:lower():find("egg") then
-            return true
-        end
-    end
-
-    -- Check Backpack
-    local backpack = player:FindFirstChild("Backpack")
-    if backpack then
-        for _, obj in ipairs(backpack:GetChildren()) do
-            if obj:IsA("Tool") and obj.Name:lower():find("egg") then
-                return true
-            end
-        end
-    end
-
-    return false
-end
-
---==================================================
--- SINGLE GLIDE LEG
---==================================================
-
-local function glideLeg(targetPos, startSpeed, maxSpeed)
+local function glideLeg(targetPos)
     local root, humanoid = getChar()
     if not root or not humanoid then return false end
 
@@ -375,8 +337,8 @@ local function glideLeg(targetPos, startSpeed, maxSpeed)
     local useArc = totalDist > 50
     local traveled = 0
     local done = false
-
     local connection
+
     connection = RunService.Heartbeat:Connect(function(dt)
         if done then return end
 
@@ -388,7 +350,13 @@ local function glideLeg(targetPos, startSpeed, maxSpeed)
         end
 
         local progress = math.clamp(traveled / totalDist, 0, 1)
-        local currentSpeed = startSpeed + (maxSpeed - startSpeed) * progress
+        local currentSpeed = CONFIG.GlideStartSpeed +
+            (CONFIG.GlideMaxSpeed - CONFIG.GlideStartSpeed) * progress
+
+        -- Slow down near the end for a soft landing
+        if progress > 0.85 then
+            currentSpeed = CONFIG.LandingSpeed
+        end
 
         traveled = traveled + currentSpeed * dt
 
@@ -396,7 +364,13 @@ local function glideLeg(targetPos, startSpeed, maxSpeed)
         local newPos = startPos:Lerp(targetPos, t)
 
         if useArc then
+            -- High arc that peaks in the middle
             local arcHeight = math.sin(t * math.pi) * CONFIG.GlideHeight
+            -- Fade arc down near the end so landing is smooth
+            if t > 0.85 then
+                local fadeT = (t - 0.85) / 0.15
+                arcHeight = arcHeight * (1 - fadeT)
+            end
             newPos = newPos + Vector3.new(0, arcHeight, 0)
         end
 
@@ -413,10 +387,10 @@ local function glideLeg(targetPos, startSpeed, maxSpeed)
         end
     end)
 
-    local avgSpeed = (startSpeed + maxSpeed) / 2
+    local avgSpeed = (CONFIG.GlideStartSpeed + CONFIG.GlideMaxSpeed) / 2
     local estimatedTime = totalDist / avgSpeed
     local startWait = tick()
-    while not done and (tick() - startWait) < (estimatedTime + 2) do
+    while not done and (tick() - startWait) < (estimatedTime + 3) do
         task.wait(0.05)
     end
 
@@ -425,7 +399,7 @@ local function glideLeg(targetPos, startSpeed, maxSpeed)
 end
 
 --==================================================
--- FULL GLIDE
+-- FULL GLIDE (waypoint + destination)
 --==================================================
 
 local function glideToCFrame(targetCFrame)
@@ -436,28 +410,18 @@ local function glideToCFrame(targetCFrame)
 
     gliding = true
 
-    -- 🥚 Auto-detect: pick speed based on egg status
-    local carryingEgg = isHoldingEgg()
-    local startSpeed, maxSpeed
-    if carryingEgg then
-        startSpeed = CONFIG.SafeStartSpeed
-        maxSpeed   = CONFIG.SafeMaxSpeed
-        setStatus("Carrying egg - safe glide", GREEN)
-    else
-        startSpeed = CONFIG.FastStartSpeed
-        maxSpeed   = CONFIG.FastMaxSpeed
-        setStatus("Empty - fast glide", ORANGE)
-    end
-
     local originalHealth = humanoid.Health
 
+    -- Disable damage states
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
         humanoid.PlatformStand = true
     end)
 
+    -- Disable collisions (fly through walls)
     local originalCollide = {}
     for _, part in ipairs(root.Parent:GetDescendants()) do
         if part:IsA("BasePart") then
@@ -466,6 +430,7 @@ local function glideToCFrame(targetCFrame)
         end
     end
 
+    -- Health protection
     local healthConn
     healthConn = humanoid.HealthChanged:Connect(function(newHealth)
         if newHealth < originalHealth and newHealth > 0 then
@@ -473,25 +438,25 @@ local function glideToCFrame(targetCFrame)
         end
     end)
 
+    -- Final destination (slightly above ground)
     local finalPos = Vector3.new(
         targetCFrame.X,
-        targetCFrame.Y + 3,
+        targetCFrame.Y + CONFIG.LandYOffset,
         targetCFrame.Z
     )
 
-    -- LEG 1: Waypoint
+    -- LEG 1: To waypoint (hardcoded)
     if CONFIG.UseWaypoint and CONFIG.Waypoint then
         local wp = CONFIG.Waypoint
-        local wpPos = Vector3.new(wp.X, wp.Y + 3, wp.Z)
+        local wpPos = Vector3.new(wp.X, wp.Y + CONFIG.LandYOffset, wp.Z)
 
         local curRoot = getChar()
         if curRoot then
             local distToWp = (wpPos - curRoot.Position).Magnitude
-            if distToWp > 30 then
-                setStatus(carryingEgg and "Safe glide: To waypoint..." or "Fast glide: To waypoint...", ORANGE)
-                glideLeg(wpPos, startSpeed, maxSpeed)
-
-                task.wait(0.15)
+            if distToWp > 40 then
+                setStatus("To waypoint...", ORANGE)
+                glideLeg(wpPos)
+                task.wait(0.2)
 
                 local checkRoot = getChar()
                 if not checkRoot then
@@ -503,9 +468,9 @@ local function glideToCFrame(targetCFrame)
         end
     end
 
-    -- LEG 2: Destination
-    setStatus(carryingEgg and "Safe glide: To destination..." or "Fast glide: To destination...", ORANGE)
-    glideLeg(finalPos, startSpeed, maxSpeed)
+    -- LEG 2: To destination
+    setStatus("To destination...", ORANGE)
+    glideLeg(finalPos)
 
     -- Cleanup
     pcall(function() healthConn:Disconnect() end)
@@ -516,11 +481,12 @@ local function glideToCFrame(targetCFrame)
         end
     end
 
-    task.wait(0.1)
+    task.wait(0.15)
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
         humanoid.PlatformStand = false
         humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
@@ -577,10 +543,7 @@ local function startAutoReturn()
         if hit and hit.Name:lower():find("egg") then
             lastReturn = now
             setStatus("Egg touched! Returning...", ORANGE)
-
-            -- Small delay so egg attaches to character FIRST
             task.wait(0.3)
-
             glideToCFrame(CONFIG.ReturnPoint)
             setStatus("Returned to base", GREEN)
         end
@@ -803,6 +766,6 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] Teleporter loaded")
+print("[BIGBOSS TP] Fixed Glide Teleporter loaded.")
 print(string.format("[BIGBOSS TP] Waypoint: Vector3.new(%d, %d, %d)",
     CONFIG.Waypoint.X, CONFIG.Waypoint.Y, CONFIG.Waypoint.Z))
