@@ -1,5 +1,5 @@
 --==================================================
--- BIGBOSS TELEPORTER (Working Version)
+-- BIGBOSS TELEPORTER (L-Shape - No Slow, No Death)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -21,8 +21,9 @@ local RED    = Color3.fromRGB(220, 70, 70)
 --==================================================
 
 local CONFIG = {
-    GlideSpeed    = 350,       -- 👈 back to working speed
-    GlideHeight   = 80,        -- 👈 HIGH arc over walls
+    GlideSpeed    = 350,       -- constant horizontal speed
+    CruiseHeight  = 60,        -- how high to fly
+    DescentSpeed  = 40,        -- safe drop speed (no kill)
     CooldownTime  = 1.2,
 
     -- ⭐ HARDCODED WAYPOINT
@@ -320,10 +321,11 @@ local function setStatus(text, color)
 end
 
 --==================================================
--- GLIDE LEG
+-- L-SHAPE GLIDE (straight top, straight drop)
 --==================================================
 
-local function glideLeg(targetPos)
+local function moveStraightTo(targetPos, speed)
+    -- Constant speed, straight line (no arc, no slow down)
     local root, humanoid = getChar()
     if not root or not humanoid then return false end
 
@@ -331,7 +333,6 @@ local function glideLeg(targetPos)
     local totalDist = (targetPos - startPos).Magnitude
     if totalDist < 3 then return true end
 
-    local useArc = totalDist > 50
     local traveled = 0
     local done = false
     local connection
@@ -339,22 +340,16 @@ local function glideLeg(targetPos)
     connection = RunService.Heartbeat:Connect(function(dt)
         if done then return end
 
-        local currentRoot, currentHum = getChar()
-        if not currentRoot or not currentHum then
+        local currentRoot = getChar()
+        if not currentRoot then
             connection:Disconnect()
             done = true
             return
         end
 
-        traveled = traveled + CONFIG.GlideSpeed * dt
-
+        traveled = traveled + speed * dt
         local t = math.clamp(traveled / totalDist, 0, 1)
         local newPos = startPos:Lerp(targetPos, t)
-
-        if useArc then
-            local arcHeight = math.sin(t * math.pi) * CONFIG.GlideHeight
-            newPos = newPos + Vector3.new(0, arcHeight, 0)
-        end
 
         currentRoot.CFrame = CFrame.new(newPos)
 
@@ -369,13 +364,52 @@ local function glideLeg(targetPos)
         end
     end)
 
-    local estimatedTime = totalDist / CONFIG.GlideSpeed
+    local estimatedTime = totalDist / speed
     local startWait = tick()
     while not done and (tick() - startWait) < (estimatedTime + 3) do
         task.wait(0.05)
     end
 
     pcall(function() connection:Disconnect() end)
+    return true
+end
+
+local function glideLeg(targetPos)
+    -- L-shape: straight across → straight down
+    local root = getChar()
+    if not root then return false end
+
+    local startPos = root.Position
+    local targetY = targetPos.Y
+
+    -- Cruise altitude (choose the higher one so we fly over walls)
+    local cruiseY = math.max(startPos.Y, targetY) + CONFIG.CruiseHeight
+
+    -- PHASE 1: rise straight up (short vertical)
+    local liftPos = Vector3.new(startPos.X, cruiseY, startPos.Z)
+    if (liftPos - startPos).Magnitude > 3 then
+        moveStraightTo(liftPos, CONFIG.GlideSpeed)
+        task.wait(0.05)
+    end
+
+    -- PHASE 2: straight across at cruise altitude
+    root = getChar()
+    if not root then return false end
+    local curPos = root.Position
+    local acrossPos = Vector3.new(targetPos.X, cruiseY, targetPos.Z)
+    if (acrossPos - curPos).Magnitude > 3 then
+        moveStraightTo(acrossPos, CONFIG.GlideSpeed)
+        task.wait(0.05)
+    end
+
+    -- PHASE 3: straight down to ground (SLOW descent, no kill)
+    root = getChar()
+    if not root then return false end
+    local dropPos = Vector3.new(targetPos.X, targetY + 3, targetPos.Z)
+    if (dropPos - root.Position).Magnitude > 3 then
+        moveStraightTo(dropPos, CONFIG.DescentSpeed)
+    end
+
     return true
 end
 
@@ -393,6 +427,7 @@ local function glideToCFrame(targetCFrame)
 
     local originalHealth = humanoid.Health
 
+    -- Disable damage states
     pcall(function()
         humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
@@ -400,6 +435,7 @@ local function glideToCFrame(targetCFrame)
         humanoid.PlatformStand = true
     end)
 
+    -- Disable collisions (fly through walls)
     local originalCollide = {}
     for _, part in ipairs(root.Parent:GetDescendants()) do
         if part:IsA("BasePart") then
@@ -408,6 +444,7 @@ local function glideToCFrame(targetCFrame)
         end
     end
 
+    -- Health protection
     local healthConn
     healthConn = humanoid.HealthChanged:Connect(function(newHealth)
         if newHealth < originalHealth and newHealth > 0 then
@@ -415,7 +452,7 @@ local function glideToCFrame(targetCFrame)
         end
     end)
 
-    local finalPos = Vector3.new(
+    local finalCFrame = CFrame.new(
         targetCFrame.X,
         targetCFrame.Y + 3,
         targetCFrame.Z
@@ -446,8 +483,9 @@ local function glideToCFrame(targetCFrame)
 
     -- LEG 2: destination
     setStatus("To destination...", ORANGE)
-    glideLeg(finalPos)
+    glideLeg(finalCFrame.Position)
 
+    -- Cleanup
     pcall(function() healthConn:Disconnect() end)
 
     for part, collide in pairs(originalCollide) do
@@ -740,6 +778,6 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] Teleporter loaded.")
+print("[BIGBOSS TP] L-Shape Teleporter loaded.")
 print(string.format("[BIGBOSS TP] Waypoint: Vector3.new(%d, %d, %d)",
     CONFIG.Waypoint.X, CONFIG.Waypoint.Y, CONFIG.Waypoint.Z))
