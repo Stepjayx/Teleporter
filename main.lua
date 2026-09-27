@@ -1,5 +1,5 @@
- --==================================================
--- BIGBOSS TELEPORTER (Final - Glide Style)
+--==================================================
+-- BIGBOSS TELEPORTER (L-Shaped Glide)
 --==================================================
 
 local Players = game:GetService("Players")
@@ -25,11 +25,14 @@ local RED    = Color3.fromRGB(220, 70, 70)
 --==================================================
 
 local CONFIG = {
-    GlideSpeed      = 350,
+    GlideStartSpeed = 350,
+    GlideMaxSpeed   = 900,
     GlideHeight     = 20,
-    MinGlideSpeed   = 200,
-    MaxGlideSpeed   = 500,
-    CooldownTime    = 1.5,
+    CooldownTime    = 1.2,
+    DescentSpeed    = 60,
+    AutoReturnEnabled = false,
+    ReturnPoint     = nil,
+    ReturnCooldown  = 1.0,
 }
 
 --==================================================
@@ -39,6 +42,8 @@ local CONFIG = {
 local savedPoints = {}
 local gliding = false
 local lastTeleport = 0
+local lastReturn = 0
+local autoReturnConn = nil
 
 --==================================================
 -- GUI
@@ -132,8 +137,8 @@ end)
 
 local main = Instance.new("Frame")
 main.Name = "Main"
-main.Size = UDim2.fromOffset(320, 380)
-main.Position = UDim2.new(0.5, -160, 0.5, -190)
+main.Size = UDim2.fromOffset(320, 480)
+main.Position = UDim2.new(0.5, -160, 0.5, -240)
 main.BackgroundColor3 = BLACK
 main.BorderSizePixel = 0
 main.Visible = true
@@ -215,9 +220,48 @@ local saveCorner = Instance.new("UICorner")
 saveCorner.CornerRadius = UDim.new(0, 7)
 saveCorner.Parent = saveBtn
 
+local autoLabel = Instance.new("TextLabel")
+autoLabel.Size = UDim2.new(1, -30, 0, 18)
+autoLabel.Position = UDim2.fromOffset(15, 142)
+autoLabel.BackgroundTransparency = 1
+autoLabel.Text = "AUTO RETURN ON EGG TOUCH"
+autoLabel.TextColor3 = ORANGE
+autoLabel.TextSize = 10
+autoLabel.Font = Enum.Font.GothamBold
+autoLabel.TextXAlignment = Enum.TextXAlignment.Left
+autoLabel.Parent = main
+
+local setReturnBtn = Instance.new("TextButton")
+setReturnBtn.Size = UDim2.new(1, -30, 0, 32)
+setReturnBtn.Position = UDim2.fromOffset(15, 162)
+setReturnBtn.BackgroundColor3 = PANEL2
+setReturnBtn.Text = "SET RETURN POINT (Current Pos)"
+setReturnBtn.TextColor3 = ORANGE
+setReturnBtn.TextSize = 11
+setReturnBtn.Font = Enum.Font.GothamBold
+setReturnBtn.Parent = main
+
+local setReturnCorner = Instance.new("UICorner")
+setReturnCorner.CornerRadius = UDim.new(0, 7)
+setReturnCorner.Parent = setReturnBtn
+
+local autoToggle = Instance.new("TextButton")
+autoToggle.Size = UDim2.new(1, -30, 0, 32)
+autoToggle.Position = UDim2.fromOffset(15, 200)
+autoToggle.BackgroundColor3 = PANEL2
+autoToggle.Text = "Auto Return: OFF"
+autoToggle.TextColor3 = GREY
+autoToggle.TextSize = 11
+autoToggle.Font = Enum.Font.GothamBold
+autoToggle.Parent = main
+
+local autoToggleCorner = Instance.new("UICorner")
+autoToggleCorner.CornerRadius = UDim.new(0, 7)
+autoToggleCorner.Parent = autoToggle
+
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -30, 0, 18)
-statusLabel.Position = UDim2.fromOffset(15, 138)
+statusLabel.Position = UDim2.fromOffset(15, 238)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Ready"
 statusLabel.TextColor3 = GREY
@@ -228,8 +272,8 @@ statusLabel.Parent = main
 
 local list = Instance.new("ScrollingFrame")
 list.Name = "PointList"
-list.Size = UDim2.new(1, -30, 1, -180)
-list.Position = UDim2.fromOffset(15, 160)
+list.Size = UDim2.new(1, -30, 1, -278)
+list.Position = UDim2.fromOffset(15, 260)
 list.BackgroundColor3 = PANEL
 list.BorderSizePixel = 0
 list.ScrollBarThickness = 4
@@ -289,8 +333,165 @@ local function setStatus(text, color)
 end
 
 --==================================================
--- GLIDE TELEPORT
+-- L-SHAPED GLIDE
 --==================================================
+
+local function glideToCFrame(targetCFrame)
+    if gliding then return false end
+
+    local root, humanoid = getChar()
+    if not root or not humanoid then return false end
+
+    gliding = true
+
+    local originalHealth = humanoid.Health
+
+    pcall(function()
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+        humanoid.PlatformStand = true
+    end)
+
+    local originalCollide = {}
+    for _, part in ipairs(root.Parent:GetDescendants()) do
+        if part:IsA("BasePart") then
+            originalCollide[part] = part.CanCollide
+            pcall(function() part.CanCollide = false end)
+        end
+    end
+
+    local healthConn
+    healthConn = humanoid.HealthChanged:Connect(function(newHealth)
+        if newHealth < originalHealth and newHealth > 0 then
+            pcall(function() humanoid.Health = originalHealth end)
+        end
+    end)
+
+    -- PHASE 1: Horizontal glide
+    local startPos = root.Position
+    local targetX = targetCFrame.X
+    local targetY = targetCFrame.Y
+    local targetZ = targetCFrame.Z
+
+    local cruiseY = math.max(startPos.Y, targetY + CONFIG.GlideHeight)
+    local horizontalStart = Vector3.new(startPos.X, cruiseY, startPos.Z)
+    local horizontalEnd = Vector3.new(targetX, cruiseY, targetZ)
+
+    local horizontalDist = (horizontalEnd - horizontalStart).Magnitude
+
+    setStatus("Phase 1: Horizontal glide...", ORANGE)
+
+    if horizontalDist > 5 then
+        local traveled = 0
+        local connection
+        connection = RunService.Heartbeat:Connect(function(dt)
+            local currentRoot, currentHum = getChar()
+            if not currentRoot or not currentHum then
+                connection:Disconnect()
+                healthConn:Disconnect()
+                gliding = false
+                return
+            end
+
+            local progress = math.clamp(traveled / horizontalDist, 0, 1)
+            local speed = CONFIG.GlideStartSpeed +
+                (CONFIG.GlideMaxSpeed - CONFIG.GlideStartSpeed) * progress
+
+            traveled = traveled + speed * dt
+
+            local t = math.clamp(traveled / horizontalDist, 0, 1)
+            local newPos = horizontalStart:Lerp(horizontalEnd, t)
+
+            currentRoot.CFrame = CFrame.new(newPos)
+
+            pcall(function()
+                currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                currentRoot.Velocity = Vector3.new(0, 0, 0)
+            end)
+
+            if t >= 1 then
+                connection:Disconnect()
+            end
+        end)
+
+        local avgSpeed = (CONFIG.GlideStartSpeed + CONFIG.GlideMaxSpeed) / 2
+        local horizontalTime = horizontalDist / avgSpeed
+        task.wait(horizontalTime + 0.15)
+
+        pcall(function() connection:Disconnect() end)
+    end
+
+    -- PHASE 2: Safe vertical drop
+    root, humanoid = getChar()
+    if not root or not humanoid then
+        pcall(function() healthConn:Disconnect() end)
+        gliding = false
+        return false
+    end
+
+    local dropStart = root.Position
+    local dropEnd = Vector3.new(targetX, targetY + 3, targetZ)
+    local dropDist = (dropStart.Y - dropEnd.Y)
+
+    setStatus("Phase 2: Landing...", ORANGE)
+
+    if dropDist > 3 then
+        local descentSpeed = CONFIG.DescentSpeed
+        local descentTime = dropDist / descentSpeed
+
+        local elapsed = 0
+        local connection
+        connection = RunService.Heartbeat:Connect(function(dt)
+            local currentRoot, currentHum = getChar()
+            if not currentRoot or not currentHum then
+                connection:Disconnect()
+                healthConn:Disconnect()
+                gliding = false
+                return
+            end
+
+            elapsed = elapsed + dt
+            local t = math.clamp(elapsed / descentTime, 0, 1)
+
+            local newPos = dropStart:Lerp(dropEnd, t)
+            currentRoot.CFrame = CFrame.new(newPos)
+
+            pcall(function()
+                currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                currentRoot.Velocity = Vector3.new(0, 0, 0)
+            end)
+
+            if t >= 1 then
+                connection:Disconnect()
+            end
+        end)
+
+        task.wait(descentTime + 0.15)
+        pcall(function() connection:Disconnect() end)
+    end
+
+    -- CLEANUP
+    pcall(function() healthConn:Disconnect() end)
+
+    for part, collide in pairs(originalCollide) do
+        if part and part.Parent then
+            pcall(function() part.CanCollide = collide end)
+        end
+    end
+
+    task.wait(0.05)
+    pcall(function()
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
+        humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end)
+
+    gliding = false
+    return true
+end
 
 local function glideTo(point)
     if gliding then
@@ -305,94 +506,99 @@ local function glideTo(point)
         return false
     end
 
+    lastTeleport = now
+    setStatus("Gliding...", ORANGE)
+    local ok = glideToCFrame(point.cframe)
+    if ok then
+        setStatus("Arrived: " .. point.name, GREEN)
+    end
+    return ok
+end
+
+--==================================================
+-- AUTO RETURN
+--==================================================
+
+local function stopAutoReturn()
+    if autoReturnConn then
+        autoReturnConn:Disconnect()
+        autoReturnConn = nil
+    end
+end
+
+local function startAutoReturn()
+    stopAutoReturn()
+
     local root, humanoid = getChar()
-    if not root or not humanoid then
+    if not root or not humanoid then return end
+
+    autoReturnConn = root.Touched:Connect(function(hit)
+        if not CONFIG.AutoReturnEnabled then return end
+        if not CONFIG.ReturnPoint then return end
+
+        local now = tick()
+        if now - lastReturn < CONFIG.ReturnCooldown then return end
+
+        if hit and hit.Name:lower():find("egg") then
+            lastReturn = now
+            setStatus("Egg touched! Returning...", ORANGE)
+            glideToCFrame(CONFIG.ReturnPoint)
+            setStatus("Returned to base", GREEN)
+        end
+    end)
+end
+
+setReturnBtn.MouseButton1Click:Connect(function()
+    local root, humanoid = getChar()
+    if not root then
         setStatus("No character", RED)
-        return false
+        return
     end
 
-    gliding = true
-    lastTeleport = now
+    CONFIG.ReturnPoint = root.CFrame
 
-    local originalHealth = humanoid.Health
+    setReturnBtn.BackgroundColor3 = GREEN
+    setReturnBtn.Text = "RETURN POINT SET"
+    setStatus("Return point saved", GREEN)
+    task.wait(1.2)
+    setReturnBtn.BackgroundColor3 = PANEL2
+    setReturnBtn.Text = "SET RETURN POINT (Current Pos)"
 
-    pcall(function()
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
-        humanoid.PlatformStand = true
-    end)
+    print("[BIGBOSS TP] Return point set")
+end)
 
-    local healthConn
-    healthConn = humanoid.HealthChanged:Connect(function(newHealth)
-        if newHealth < originalHealth and newHealth > 0 then
-            pcall(function() humanoid.Health = originalHealth end)
-        end
-    end)
+autoToggle.MouseButton1Click:Connect(function()
+    if not CONFIG.ReturnPoint then
+        setStatus("Set a return point first!", RED)
+        autoToggle.BackgroundColor3 = Color3.fromRGB(80, 25, 25)
+        task.wait(0.4)
+        autoToggle.BackgroundColor3 = PANEL2
+        return
+    end
 
-    local startPos = root.Position
-    local endPos = Vector3.new(
-        point.cframe.X,
-        point.cframe.Y + 3,
-        point.cframe.Z
-    )
+    CONFIG.AutoReturnEnabled = not CONFIG.AutoReturnEnabled
 
-    local totalDist = (endPos - startPos).Magnitude
-    local speed = math.clamp(CONFIG.GlideSpeed, CONFIG.MinGlideSpeed, CONFIG.MaxGlideSpeed)
-    local duration = totalDist / speed
+    if CONFIG.AutoReturnEnabled then
+        autoToggle.Text = "Auto Return: ON"
+        autoToggle.TextColor3 = GREEN
+        autoToggle.BackgroundColor3 = Color3.fromRGB(25, 65, 40)
+        setStatus("Auto Return active", GREEN)
+        startAutoReturn()
+    else
+        autoToggle.Text = "Auto Return: OFF"
+        autoToggle.TextColor3 = GREY
+        autoToggle.BackgroundColor3 = PANEL2
+        setStatus("Auto Return off", GREY)
+        stopAutoReturn()
+    end
+end)
 
-    setStatus(string.format("Gliding... (%.1fs)", duration), ORANGE)
-
-    local elapsed = 0
-    local connection
-    connection = RunService.Heartbeat:Connect(function(dt)
-        elapsed = elapsed + dt
-        local t = math.clamp(elapsed / duration, 0, 1)
-
-        local currentRoot, currentHum = getChar()
-        if not currentRoot or not currentHum then
-            connection:Disconnect()
-            healthConn:Disconnect()
-            gliding = false
-            setStatus("Died during glide", RED)
-            return
-        end
-
-        local newPos = startPos:Lerp(endPos, t)
-        local arcHeight = math.sin(t * math.pi) * CONFIG.GlideHeight
-        newPos = newPos + Vector3.new(0, arcHeight, 0)
-
-        currentRoot.CFrame = CFrame.new(newPos)
-
-        pcall(function()
-            currentRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            currentRoot.Velocity = Vector3.new(0, 0, 0)
-        end)
-
-        if t >= 1 then
-            connection:Disconnect()
-        end
-    end)
-
-    task.wait(duration + 0.1)
-
-    pcall(function() connection:Disconnect() end)
-    pcall(function() healthConn:Disconnect() end)
-
-    task.wait(0.1)
-    pcall(function()
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
-        humanoid.PlatformStand = false
-        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-    end)
-
-    gliding = false
-    setStatus(string.format("Arrived: %s", point.name), GREEN)
-    print(string.format("[BIGBOSS TP] Glided to %s (%.0f studs)", point.name, totalDist))
-    return true
-end
+player.CharacterAdded:Connect(function()
+    task.wait(1)
+    if CONFIG.AutoReturnEnabled then
+        startAutoReturn()
+    end
+end)
 
 --==================================================
 -- ROW CREATION
@@ -426,7 +632,7 @@ local function createRow(point, index)
     delBtn.Size = UDim2.fromOffset(30, 30)
     delBtn.Position = UDim2.new(1, -38, 0.5, -15)
     delBtn.BackgroundColor3 = Color3.fromRGB(60, 25, 25)
-    delBtn.Text = "✕"
+    delBtn.Text = "X"
     delBtn.TextColor3 = RED
     delBtn.TextSize = 14
     delBtn.Font = Enum.Font.GothamBold
@@ -558,4 +764,4 @@ end)
 
 refreshEmptyLabel()
 setStatus("Ready", GREY)
-print("[BIGBOSS TP] Glide Teleporter loaded.")
+print("[BIGBOSS TP] L-Shaped Glide Teleporter loaded.")
